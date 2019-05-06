@@ -9,21 +9,25 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using CEK.CSharp;
 using CEK.CSharp.Models;
+using Line.Messaging;
+using Microsoft.Azure.WebJobs.Host;
+using Microsoft.Extensions.Configuration;
+using System.Collections.Generic;
 
 namespace MangaClova
 {
     public static class ClovaMeatMenu
     {
-        private const String LaunchMessege = "何を食べるか決められないあなたに、オススメのメニューを提案します。朝、昼、夜を指定して、朝に何を食べたらいい？などと聞いてください";
-        private const String SessionEndedMessege = "いつでも呼んでくださいね。";
-        private const String NoSlotMessege = "うまく聞き取れませんでした。朝、昼、夜を指定してください。";
-        private const String  MenuIntent= "MenuIntent";
-        private const String  SlotTimeZone= "meatTime";
+        private static string IntroductionMessage { get; } = "こんにちは。何を食べるか決められないあなたに、オススメのメニューを提案します。朝、昼、夜を指定して、朝に何を食べたらいい？などと聞いてください";
+        private static string SessionEndedMessege { get; } = "いつでも呼んでくださいね。";
+        private static string NoSlotMessege { get; } = "うまく聞き取れませんでした。朝、昼、夜を指定してください。";
+        private const string  MenuIntent= "MenuIntent";
+        private static string  SlotTimeZone= "meatTime";
         public const int SpeedOfLight = 300000; // km per sec.
         [FunctionName("ClovaMeatMenu")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
-            ILogger log)
+            ExecutionContext context,ILogger log)
         {
             //リクエストボディのJSONを検証してC#のクラスに変換
             var clovaRequest = await new ClovaClient().GetRequest(req.Headers["SignatureCEK"],req.Body);
@@ -33,7 +37,7 @@ namespace MangaClova
             {
                 case RequestType.LaunchRequest:
                 //起動時の処理
-                clovaResponse.AddText(LaunchMessege);
+                clovaResponse.AddText(IntroductionMessage);
                 clovaResponse.ShouldEndSession = false;
                 break;
                 case RequestType.SessionEndedRequest:
@@ -68,7 +72,25 @@ namespace MangaClova
                             clovaResponse.ShouldEndSession = false;
                             break;      
                         }
+                        // LINE にプッシュ通知する
+                            var config = new ConfigurationBuilder()
+                                .SetBasePath(context.FunctionAppDirectory)
+                                .AddJsonFile("local.settings.json", true)
+                                .AddEnvironmentVariables()
+                                .Build();
+
+                            var secret = config.GetValue<string>("LineMessagingApiSecret");
+                            var messagingClient = new LineMessagingClient(secret);
+  
+                             await messagingClient.PushMessageAsync(
+                                 to: clovaRequest.Session.User.UserId,
+                                 messages: new List<ISendMessage>
+                                 {
+                                     new TextMessage($"今日あなたが食べたい{timeZone}ご飯は {menu} です。"),
+                                 });
                         clovaResponse.AddText($"今日あなたが食べたい{timeZone}ご飯は {menu} です。");
+
+
                         break;
                         default:
                         // 認識できなかったインテント
